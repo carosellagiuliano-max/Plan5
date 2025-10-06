@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
-  <title id="title">Plan5 Logo</title>
-  <desc id="desc">Stylized letters P and 5 for the Plan5 application.</desc>
-  <rect width="128" height="128" rx="24" fill="#0f172a" />
-  <g fill="#f8fafc" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-weight="700">
-    <text x="28" y="78" font-size="72">P</text>
-    <text x="70" y="92" font-size="60">5</text>
-  </g>
-</svg>
