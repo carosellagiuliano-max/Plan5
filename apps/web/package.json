@@ -1,0 +1,47 @@
+{
+  "name": "@plan5/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test:a11y": "axe http://localhost:3000 --exit",
+    "test:performance": "lighthouse http://localhost:3000 --config-path=../../lighthouserc.json"
+  },
+  "dependencies": {
+    "@plan5/types": "file:../../packages/types",
+    "@plan5/ui": "file:../../packages/ui",
+    "@radix-ui/react-slot": "^1.1.1",
+    "@sentry/nextjs": "^8.35.0",
+    "@tanstack/react-query": "^5.66.9",
+    "@tanstack/react-query-devtools": "^5.66.9",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.468.0",
+    "next": "15.5.4",
+    "next-intl": "^3.25.1",
+    "next-themes": "^0.3.0",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "uuid": "^11.0.3",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@axe-core/cli": "^4.9.0",
+    "@eslint/eslintrc": "^3",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/uuid": "^10.0.0",
+    "@tailwindcss/postcss": "^4",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9",
+    "eslint-config-next": "15.5.4",
+    "lighthouse": "^12.2.0",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5"
+  }
+}

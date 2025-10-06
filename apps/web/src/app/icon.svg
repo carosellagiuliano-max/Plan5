@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Plan5 logo">
+  <defs>
+    <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0ea5e9" />
+      <stop offset="100%" stop-color="#6366f1" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#gradient)" />
+  <path
+    d="M20 20h18c4.418 0 8 3.582 8 8 0 4.08-2.995 7.463-6.885 7.95l5.885 8.05h-6.836l-5.247-7.5H26v7.5h-6V20zm18 10c1.105 0 2-.895 2-2s-.895-2-2-2H26v4h12z"
+    fill="#f9fafb"
+  />
+</svg>
