@@ -5,15 +5,52 @@ import { Buffer } from 'node:buffer';
 import type {
   BookingPayload,
   BookingResponse,
+  ComplianceRequestPayload,
+  ComplianceStatusResponse,
+  EmailTemplatePayload,
+  InvoiceRequest,
+  InvoiceResponse,
   OrderPayload,
   OrderResponse,
+  PaymentIntentRequest,
+  PaymentIntentResponse,
   ProductSummary,
+  RefundRequest,
+  RefundResponse,
   SessionStatus,
-  SumUpDeepLinkPayload
+  SumUpDeepLinkPayload,
+  SumUpStatusResponse
 } from '@plan5/types';
 
 const BOOKING_TAG = 'bookings';
 const SHOP_TAG = 'shop';
+
+const SUPABASE_EDGE_URL = process.env.SUPABASE_EDGE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_EDGE_URL;
+const SUPABASE_EDGE_KEY = process.env.SUPABASE_EDGE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_EDGE_KEY;
+
+async function callEdgeFunction<T>(name: string, init: RequestInit & { searchParams?: Record<string, string> } = {}) {
+  if (!SUPABASE_EDGE_URL) {
+    throw new Error('SUPABASE_EDGE_URL is not configured');
+  }
+  const url = new URL(name, SUPABASE_EDGE_URL.endsWith('/') ? SUPABASE_EDGE_URL : `${SUPABASE_EDGE_URL}/`);
+  if (init.searchParams) {
+    Object.entries(init.searchParams).forEach(([key, value]) => {
+      if (value) url.searchParams.set(key, value);
+    });
+  }
+  const response = await fetch(url, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      ...(SUPABASE_EDGE_KEY ? { Authorization: `Bearer ${SUPABASE_EDGE_KEY}` } : {}),
+      ...(init.headers ?? {})
+    }
+  });
+  if (!response.ok) {
+    throw new Error(`Edge function ${name} failed: ${await response.text()}`);
+  }
+  return (await response.json()) as T;
+}
 
 function withDelay<T>(data: T, ms = 200) {
   return new Promise<T>((resolve) => setTimeout(() => resolve(data), ms));
@@ -91,4 +128,45 @@ export async function sessionStatus(): Promise<SessionStatus> {
     lastSeenAt: now.toISOString(),
     ipHash: Buffer.from(ip).toString('base64url')
   };
+}
+
+export async function createPaymentIntent(payload: PaymentIntentRequest): Promise<PaymentIntentResponse> {
+  return await callEdgeFunction<PaymentIntentResponse>('payments', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function refundPayment(payload: RefundRequest): Promise<RefundResponse> {
+  return await callEdgeFunction<RefundResponse>('payments/refunds', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function pollSumUpStatus(checkoutId: string): Promise<SumUpStatusResponse> {
+  return await callEdgeFunction<SumUpStatusResponse>(`payments/sumup/status/${checkoutId}`);
+}
+
+export async function generateInvoiceDocument(payload: InvoiceRequest): Promise<InvoiceResponse> {
+  return await callEdgeFunction<InvoiceResponse>('invoices', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function sendTransactionalEmail(payload: EmailTemplatePayload) {
+  return await callEdgeFunction('emails', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function requestComplianceAction(
+  payload: ComplianceRequestPayload
+): Promise<ComplianceStatusResponse> {
+  return await callEdgeFunction<ComplianceStatusResponse>('compliance', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
 }
