@@ -1,0 +1,272 @@
+name: Quality Gates - Accessibility, Performance, Security
+
+on:
+  push:
+    branches: ["main", "develop"]
+  pull_request:
+    branches: ["main", "develop"]
+  workflow_dispatch:
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+  BASE_URL: http://localhost:3000
+  PERFORMANCE_THRESHOLD: '0.9'
+  ACCESSIBILITY_THRESHOLD: '0'
+  ACCESSIBILITY_SCORE_THRESHOLD: '0.9'
+
+jobs:
+  axe:
+    name: Axe accessibility scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Next.js app
+        run: npm run build
+
+      - name: Start Next.js server
+        run: |
+          npm --prefix apps/web run start -- --hostname 0.0.0.0 --port 3000 &
+          echo $! > .next-server.pid
+          npx wait-on ${{ env.BASE_URL }}
+
+      - name: Run axe-core CLI
+        run: |
+          mkdir -p reports/axe
+          npx axe ${{ env.BASE_URL }} --exit --save reports/axe/axe-report.json --timeout 60000
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f .next-server.pid ]; then
+            kill $(cat .next-server.pid)
+          fi
+
+      - name: Upload axe report
+        uses: actions/upload-artifact@v4
+        with:
+          name: axe-report
+          path: reports/axe
+
+  lighthouse:
+    name: Lighthouse regression guard
+    runs-on: ubuntu-latest
+    needs: axe
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Next.js app
+        run: npm run build
+
+      - name: Start Next.js server
+        run: |
+          npm --prefix apps/web run start -- --hostname 0.0.0.0 --port 3000 &
+          echo $! > .next-server.pid
+          npx wait-on ${{ env.BASE_URL }}
+
+      - name: Run Lighthouse performance suite
+        run: |
+          mkdir -p reports/lighthouse
+          npx lighthouse ${{ env.BASE_URL }} \
+            --config-path=lighthouserc.json \
+            --output json \
+            --output html \
+            --output-path=reports/lighthouse/report
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f .next-server.pid ]; then
+            kill $(cat .next-server.pid)
+          fi
+
+      - name: Summarize Lighthouse results
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const reportPath = path.join('reports', 'lighthouse', 'report.report.json');
+          if (!fs.existsSync(reportPath)) {
+            console.log('No lighthouse report produced');
+            process.exit(0);
+          }
+          const data = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+          const categories = data.categories || {};
+          const summary = {
+            performance: categories.performance?.score ?? null,
+            accessibility: categories.accessibility?.score ?? null,
+            bestPractices: categories['best-practices']?.score ?? null,
+            seo: categories.seo?.score ?? null,
+          };
+          fs.writeFileSync(path.join('reports', 'lighthouse', 'summary.json'), JSON.stringify(summary, null, 2));
+          console.log('Lighthouse summary:', summary);
+          NODE
+
+      - name: Upload Lighthouse report
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-report
+          path: reports/lighthouse
+
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    needs: lighthouse
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        run: |
+          mkdir -p reports/security
+          npm audit --json > reports/security/npm-audit.json || true
+
+      - name: Upload audit log
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit
+          path: reports/security
+
+  secret-scanning:
+    name: Secret scanning
+    runs-on: ubuntu-latest
+    needs: dependency-audit
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          args: detect --report-format json --report-path gitleaks-report.json
+
+      - name: Upload gitleaks report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: gitleaks-report.json
+
+  quality-gates:
+    name: Quality gate enforcement
+    runs-on: ubuntu-latest
+    needs:
+      - dependency-audit
+      - lighthouse
+      - axe
+      - secret-scanning
+    if: always()
+    steps:
+      - name: Assert dependency results
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const needs = ${{ toJson(needs) }};
+            const failed = Object.entries(needs).filter(([, value]) => value.result !== 'success');
+            if (failed.length) {
+              const details = failed.map(([name, value]) => `${name}: ${value.result}`).join(', ');
+              core.setFailed(`Upstream quality jobs failed or were skipped: ${details}`);
+            }
+
+      - name: Download accessibility artifact
+        if: ${{ success() }}
+        uses: actions/download-artifact@v4
+        with:
+          name: axe-report
+          path: artifacts/axe
+
+      - name: Download Lighthouse artifact
+        if: ${{ success() }}
+        uses: actions/download-artifact@v4
+        with:
+          name: lighthouse-report
+          path: artifacts/lighthouse
+
+      - name: Download audit artifact
+        if: ${{ success() }}
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-audit
+          path: artifacts/security
+
+      - name: Enforce thresholds
+        if: ${{ success() }}
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+
+          const performanceThreshold = parseFloat(process.env.PERFORMANCE_THRESHOLD ?? '0.9');
+          const accessibilityThreshold = parseFloat(process.env.ACCESSIBILITY_THRESHOLD ?? '0');
+          const accessibilityScoreThreshold = parseFloat(process.env.ACCESSIBILITY_SCORE_THRESHOLD ?? '0.9');
+
+          const lighthouseSummaryPath = path.join('artifacts', 'lighthouse', 'summary.json');
+          if (fs.existsSync(lighthouseSummaryPath)) {
+            const summary = JSON.parse(fs.readFileSync(lighthouseSummaryPath, 'utf8'));
+            if (typeof summary.performance === 'number' && summary.performance < performanceThreshold) {
+              throw new Error(`Performance score ${summary.performance} below threshold ${performanceThreshold}`);
+            }
+            if (typeof summary.accessibility === 'number' && summary.accessibility < accessibilityScoreThreshold) {
+              throw new Error(`Accessibility score ${summary.accessibility} below threshold ${accessibilityScoreThreshold}`);
+            }
+          }
+
+          const axeReportPath = path.join('artifacts', 'axe', 'axe-report.json');
+          if (fs.existsSync(axeReportPath)) {
+            const axeReport = JSON.parse(fs.readFileSync(axeReportPath, 'utf8'));
+            const violations = Array.isArray(axeReport.violations) ? axeReport.violations.length : 0;
+            if (violations > accessibilityThreshold) {
+              throw new Error(`Accessibility violations detected (${violations}) above threshold ${accessibilityThreshold}`);
+            }
+          }
+
+          const auditPath = path.join('artifacts', 'security', 'npm-audit.json');
+          if (fs.existsSync(auditPath)) {
+            const audit = JSON.parse(fs.readFileSync(auditPath, 'utf8'));
+            const vulnerabilities = audit.vulnerabilities ?? {};
+            const metadataVulns = audit.metadata?.vulnerabilities ?? {};
+            const failing = Object.values(vulnerabilities).some((value) => {
+              if (!value) return false;
+              return ['critical', 'high'].includes(String(value.severity ?? value.name ?? '').toLowerCase());
+            }) || ['critical', 'high'].some((level) => {
+              const count = metadataVulns[level];
+              return typeof count === 'number' && count > 0;
+            });
+            if (failing) {
+              throw new Error('High or critical vulnerabilities detected in npm audit');
+            }
+          }
+          NODE
