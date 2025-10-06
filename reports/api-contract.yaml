@@ -1,0 +1,738 @@
+openapi: 3.1.0
+info:
+  title: Plan5 Edge API
+  version: 1.0.0
+  description: |
+    HTTP contract for Plan5 Supabase Edge Functions covering bookings, payments,
+    compliance, email, and operational automation. All endpoints require a
+    tenant-scoped Bearer token unless noted. Examples use anonymised identifiers
+    to stay within Swiss/EU data protection guidelines.
+servers:
+  - url: https://<project-ref>.functions.supabase.co
+    description: Supabase Edge runtime (replace `<project-ref>` per environment)
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    BookingRequest:
+      type: object
+      required: [tenantId, serviceId, staffId, customerId, startAt]
+      properties:
+        tenantId:
+          type: string
+          format: uuid
+        serviceId:
+          type: string
+          format: uuid
+        staffId:
+          type: string
+          format: uuid
+        customerId:
+          type: string
+          format: uuid
+        startAt:
+          type: string
+          format: date-time
+        notes:
+          type: string
+        source:
+          type: string
+    BookingResponse:
+      type: object
+      properties:
+        appointment:
+          type: object
+          description: Created appointment record from Supabase.
+    CalendarRequest:
+      type: object
+      required: [tenantId]
+      properties:
+        tenantId:
+          type: string
+          format: uuid
+        staffId:
+          type: string
+          format: uuid
+        rangeStart:
+          type: string
+          format: date-time
+        rangeEnd:
+          type: string
+          format: date-time
+    CalendarResponse:
+      type: object
+      properties:
+        appointments:
+          type: array
+          items:
+            type: object
+        availability:
+          type: array
+          items:
+            type: object
+    PaymentIntentRequest:
+      type: object
+      required: [tenantId, orderId, amountCents, currency, customerEmail]
+      properties:
+        tenantId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        amountCents:
+          type: integer
+          minimum: 1
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        customerEmail:
+          type: string
+          format: email
+        customerName:
+          type: string
+        locale:
+          type: string
+        mode:
+          type: string
+          enum: [payment_intent, checkout_session]
+        provider:
+          type: string
+          enum: [stripe, sumup]
+        appointmentId:
+          type: string
+          format: uuid
+        metadata:
+          type: object
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: number
+              - type: boolean
+    PaymentIntentResponse:
+      type: object
+      properties:
+        provider:
+          type: string
+        clientSecret:
+          type: string
+        checkoutUrl:
+          type: string
+          format: uri
+        intentId:
+          type: string
+        status:
+          type: string
+        amountCents:
+          type: integer
+        currency:
+          type: string
+        nextAction:
+          type: object
+          properties:
+            type:
+              type: string
+            url:
+              type: string
+              format: uri
+    RefundRequest:
+      type: object
+      required: [tenantId, orderId, transactionId, initiatedBy]
+      properties:
+        tenantId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        transactionId:
+          type: string
+          format: uuid
+        amountCents:
+          type: integer
+        reason:
+          type: string
+        initiatedBy:
+          type: string
+          enum: [customer, staff, system]
+    RefundResponse:
+      type: object
+      properties:
+        refundId:
+          type: string
+        status:
+          type: string
+        amountCents:
+          type: integer
+        currency:
+          type: string
+        provider:
+          type: string
+    SumUpManualRequest:
+      type: object
+      required: [tenantId, orderId, checkoutId]
+      properties:
+        tenantId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        checkoutId:
+          type: string
+        staffId:
+          type: string
+          format: uuid
+        notes:
+          type: string
+    ComplianceRequest:
+      type: object
+      required: [tenantId, subjectId, type]
+      properties:
+        tenantId:
+          type: string
+          format: uuid
+        subjectId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [export, delete]
+        initiatedBy:
+          type: string
+          enum: [customer, staff, system]
+        reason:
+          type: string
+    ComplianceResponse:
+      type: object
+      properties:
+        requestId:
+          type: string
+        status:
+          type: string
+        exportUrl:
+          type: string
+    ConsentRequest:
+      type: object
+      required: [tenantId, subjectId, consentType, granted]
+      properties:
+        tenantId:
+          type: string
+          format: uuid
+        subjectId:
+          type: string
+          format: uuid
+        consentType:
+          type: string
+        granted:
+          type: boolean
+        metadata:
+          type: object
+    EmailRequest:
+      type: object
+      required: [to, template]
+      properties:
+        tenantId:
+          type: string
+          format: uuid
+        to:
+          type: string
+          format: email
+        cc:
+          type: array
+          items:
+            type: string
+            format: email
+        bcc:
+          type: array
+          items:
+            type: string
+            format: email
+        template:
+          type: string
+          enum:
+            - booking_confirmation
+            - payment_receipt
+            - invoice_ready
+            - reminder_upcoming
+            - gdpr_export_ready
+            - gdpr_deletion_confirmed
+            - custom
+        locale:
+          type: string
+        subject:
+          type: string
+        data:
+          type: object
+        attachments:
+          type: array
+          items:
+            type: object
+            properties:
+              filename:
+                type: string
+              content:
+                type: string
+              type:
+                type: string
+        ics:
+          type: array
+          items:
+            type: object
+            required: [uid, start, end, summary]
+            properties:
+              uid:
+                type: string
+              start:
+                type: string
+                format: date-time
+              end:
+                type: string
+                format: date-time
+              summary:
+                type: string
+              description:
+                type: string
+              location:
+                type: string
+        providerHint:
+          type: string
+          enum: [resend, postmark]
+    InvoiceRequest:
+      type: object
+      required: [tenantId, orderId]
+      properties:
+        tenantId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        locale:
+          type: string
+        dueDate:
+          type: string
+          format: date-time
+        sendEmail:
+          type: boolean
+        emailOverride:
+          type: string
+          format: email
+    ReminderProcessRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+    ShopRequest:
+      type: object
+      required: [tenantId, productId, quantity, customerId]
+      properties:
+        tenantId:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          minimum: 1
+        customerId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+paths:
+  /bookings:
+    post:
+      summary: Create an appointment.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingRequest'
+      responses:
+        '200':
+          description: Booking created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingResponse'
+        '400':
+          description: Validation error.
+  /calendar:
+    post:
+      summary: Retrieve appointments and availability for a range.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalendarRequest'
+      responses:
+        '200':
+          description: Calendar data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarResponse'
+        '400':
+          description: Invalid payload.
+  /payments:
+    post:
+      summary: Create Stripe or SumUp payment intent/checkout.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentIntentRequest'
+      responses:
+        '200':
+          description: Payment intent details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentIntentResponse'
+        '400':
+          description: Unable to create payment.
+  /payments/refunds:
+    post:
+      summary: Issue a refund through the underlying provider.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefundRequest'
+      responses:
+        '200':
+          description: Refund accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefundResponse'
+        '400':
+          description: Refund rejected.
+  /payments/webhooks/stripe:
+    post:
+      summary: Stripe webhook receiver.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Stripe event payload (see Stripe API).
+      responses:
+        '200':
+          description: Event accepted.
+        '400':
+          description: Invalid signature or payload.
+  /payments/webhooks/sumup:
+    post:
+      summary: SumUp webhook receiver.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: SumUp webhook payload.
+      responses:
+        '200':
+          description: Event processed.
+  /payments/sumup/status/{checkoutId}:
+    get:
+      summary: Poll SumUp checkout status.
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: checkoutId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Checkout status payload.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  checkoutId:
+                    type: string
+                  status:
+                    type: string
+                  amountCents:
+                    type: integer
+                  currency:
+                    type: string
+                  lastPolledAt:
+                    type: string
+                    format: date-time
+                  deeplink:
+                    type: string
+                    format: uri
+        '400':
+          description: Invalid checkout id.
+  /payments/sumup/manual:
+    post:
+      summary: Record manual SumUp settlement.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SumUpManualRequest'
+      responses:
+        '200':
+          description: Manual settlement recorded.
+        '400':
+          description: Invalid request.
+  /shop:
+    post:
+      summary: Reserve product stock and ensure order.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ShopRequest'
+      responses:
+        '200':
+          description: Reservation result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orderId:
+                    type: string
+                  stock:
+                    type: object
+        '400':
+          description: Failed reservation.
+  /compliance:
+    post:
+      summary: Create compliance export or delete request.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComplianceRequest'
+      responses:
+        '200':
+          description: Compliance request accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComplianceResponse'
+        '400':
+          description: Invalid payload.
+  /compliance/consent:
+    post:
+      summary: Record consent grant or revocation.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentRequest'
+      responses:
+        '200':
+          description: Consent recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        '400':
+          description: Invalid request.
+  /compliance/status/{id}:
+    get:
+      summary: Retrieve compliance request status.
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Compliance status payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComplianceResponse'
+        '404':
+          description: Request not found.
+  /emails:
+    post:
+      summary: Send transactional email.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailRequest'
+      responses:
+        '200':
+          description: Email accepted by provider.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  provider:
+                    type: string
+                  guidance:
+                    type: string
+        '400':
+          description: Invalid payload.
+  /emails/webhooks/bounce:
+    post:
+      summary: Receive bounce notifications.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, email]
+              properties:
+                provider:
+                  type: string
+                  enum: [resend, postmark]
+                email:
+                  type: string
+                  format: email
+                reason:
+                  type: string
+                occurredAt:
+                  type: string
+                  format: date-time
+                tenantId:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Bounce recorded.
+        '400':
+          description: Invalid payload.
+  /invoices:
+    post:
+      summary: Generate invoice and optional email.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvoiceRequest'
+      responses:
+        '200':
+          description: Invoice generated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invoiceId:
+                    type: string
+                  invoiceNumber:
+                    type: string
+                  issuedAt:
+                    type: string
+                    format: date-time
+                  dueDate:
+                    type: string
+                    format: date-time
+                  totalCents:
+                    type: integer
+                  currency:
+                    type: string
+                  qrBillPayload:
+                    type: string
+        '400':
+          description: Invoice generation failed.
+  /reminders:
+    post:
+      summary: Dispatch scheduled reminders.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReminderProcessRequest'
+      responses:
+        '200':
+          description: Reminder batch processed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        '401':
+          description: Invalid token.
+  /scheduled-stock-release:
+    post:
+      summary: Release expired stock reservations.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Number of stock reservations released.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  released:
+                    type: integer
+        '500':
+          description: Unexpected error.
