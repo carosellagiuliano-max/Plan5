@@ -1,0 +1,38 @@
+{
+  "nav": {
+    "home": "Accueil",
+    "booking": "Réservation",
+    "shop": "Boutique",
+    "admin": "Admin",
+    "portal": "Portail client",
+    "legal": "Mentions"
+  },
+  "hero": {
+    "title": "Expérience Plan5",
+    "subtitle": "Hospitalité alpine dans toute la Suisse"
+  },
+  "booking": {
+    "title": "Réservez votre prochain séjour",
+    "details": "Détails de réservation",
+    "confirmation": "Confirmer les informations",
+    "payment": "Paiement sécurisé",
+    "complete": "C'est fait !"
+  },
+  "shop": {
+    "title": "Boutique",
+    "cta": "Ajouter au panier"
+  },
+  "portal": {
+    "title": "Portail client",
+    "welcome": "Bon retour, {name}!"
+  },
+  "admin": {
+    "title": "Administration",
+    "sumup": "Générer un lien SumUp"
+  },
+  "legal": {
+    "imprint": "Mentions légales",
+    "privacy": "Protection des données",
+    "terms": "Conditions"
+  }
+}

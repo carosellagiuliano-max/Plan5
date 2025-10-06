@@ -1,0 +1,38 @@
+{
+  "nav": {
+    "home": "Home",
+    "booking": "Booking",
+    "shop": "Shop",
+    "admin": "Admin",
+    "portal": "Customer Portal",
+    "legal": "Legal"
+  },
+  "hero": {
+    "title": "Plan5 Experience",
+    "subtitle": "Curated alpine hospitality across Switzerland"
+  },
+  "booking": {
+    "title": "Book your next stay",
+    "details": "Reservation details",
+    "confirmation": "Confirm information",
+    "payment": "Secure payment",
+    "complete": "All set!"
+  },
+  "shop": {
+    "title": "Boutique shop",
+    "cta": "Add to cart"
+  },
+  "portal": {
+    "title": "Customer portal",
+    "welcome": "Welcome back, {name}!"
+  },
+  "admin": {
+    "title": "Administration",
+    "sumup": "Generate SumUp payment link"
+  },
+  "legal": {
+    "imprint": "Imprint",
+    "privacy": "Privacy policy",
+    "terms": "Terms of service"
+  }
+}

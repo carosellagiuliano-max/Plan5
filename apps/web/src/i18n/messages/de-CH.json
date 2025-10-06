@@ -1,0 +1,38 @@
+{
+  "nav": {
+    "home": "Startseite",
+    "booking": "Buchung",
+    "shop": "Shop",
+    "admin": "Admin",
+    "portal": "Kundenportal",
+    "legal": "Rechtliches"
+  },
+  "hero": {
+    "title": "Plan5 Erlebnis",
+    "subtitle": "Kuratiertes Alpenhospitality in der ganzen Schweiz"
+  },
+  "booking": {
+    "title": "Buchen Sie Ihren nächsten Aufenthalt",
+    "details": "Reservierungsdetails",
+    "confirmation": "Angaben bestätigen",
+    "payment": "Sichere Zahlung",
+    "complete": "Geschafft!"
+  },
+  "shop": {
+    "title": "Boutique-Shop",
+    "cta": "In den Warenkorb"
+  },
+  "portal": {
+    "title": "Kundenportal",
+    "welcome": "Willkommen zurück, {name}!"
+  },
+  "admin": {
+    "title": "Administration",
+    "sumup": "SumUp Zahlungslink erstellen"
+  },
+  "legal": {
+    "imprint": "Impressum",
+    "privacy": "Datenschutz",
+    "terms": "AGB"
+  }
+}
