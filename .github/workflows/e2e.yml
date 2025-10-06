@@ -1,0 +1,105 @@
+name: Playwright E2E Suite
+
+on:
+  push:
+    branches: ["main", "develop"]
+  pull_request:
+    branches: ["main", "develop"]
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+  BASE_URL: http://127.0.0.1:3000
+
+jobs:
+  playwright:
+    name: Scenario - ${{ matrix.scenario }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - booking-conflict
+          - stripe-checkout
+          - sumup-pos
+          - admin-ui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Build app
+        run: npm run build
+
+      - name: Start app server
+        run: |
+          npm --prefix apps/web run start -- --hostname 0.0.0.0 --port 3000 &
+          echo $! > .next-server.pid
+          npx wait-on ${{ env.BASE_URL }}
+
+      - name: Run Playwright tests
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ env.BASE_URL }}
+        run: |
+          if [ ! -f playwright.config.ts ] && [ ! -f playwright.config.mjs ]; then
+            echo "Skipping Playwright run because no config file exists"
+            exit 0
+          fi
+          mkdir -p playwright-report
+          npx playwright test --reporter=html --output=playwright-report --grep "@${{ matrix.scenario }}"
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f .next-server.pid ]; then
+            kill $(cat .next-server.pid)
+          fi
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-${{ matrix.scenario }}
+          path: playwright-report
+          if-no-files-found: warn
+
+      - name: Report to Sentry (optional)
+        if: ${{ always() && secrets.SENTRY_AUTH_TOKEN != '' && secrets.SENTRY_MONITOR_SLUG != '' }}
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          SENTRY_MONITOR_SLUG: ${{ secrets.SENTRY_MONITOR_SLUG }}
+        run: |
+          if [ -n "$SENTRY_MONITOR_SLUG" ] && [ -n "$SENTRY_AUTH_TOKEN" ]; then
+            STATUS="ok"
+            if [ "${{ job.status }}" != "success" ]; then
+              STATUS="error"
+            fi
+            npx sentry-cli monitor check-in --monitor "$SENTRY_MONITOR_SLUG" --status "$STATUS" --environment e2e-${{ matrix.scenario }} || true
+          fi
+
+      - name: Export traces to OTEL (optional)
+        if: ${{ always() && secrets.OTEL_EXPORTER_OTLP_ENDPOINT != '' }}
+        env:
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
+        run: |
+          if [ -n "$OTEL_EXPORTER_OTLP_ENDPOINT" ]; then
+            echo "Dispatching synthetic span for scenario ${{ matrix.scenario }}"
+            curl -sSf -X POST "$OTEL_EXPORTER_OTLP_ENDPOINT" -H 'Content-Type: application/json' -d '{"resourceSpans": []}' || true
+          fi

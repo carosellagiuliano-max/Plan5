@@ -1,0 +1,225 @@
+name: Deploy - Netlify & Supabase Promotion
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      promote_environment:
+        description: "Promote Supabase environment"
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
+      netlify_environment:
+        description: "Netlify deploy context"
+        type: choice
+        options:
+          - preview
+          - production
+        default: preview
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  netlify:
+    name: Netlify deploy (${{ github.event.inputs.netlify_environment || 'production' }})
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.event.inputs.netlify_environment || 'production' }}
+      url: ${{ steps.capture-url.outputs.url }}
+    outputs:
+      url: ${{ steps.capture-url.outputs.url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Next.js project
+        env:
+          NEXT_RUNTIME: nodejs
+        run: |
+          npm run build
+
+      - name: Compose Netlify deploy flags
+        id: netlify-flags
+        run: |
+          flag=""
+          if [ -d apps/web/netlify/edge-functions ]; then
+            flag="--functions=apps/web/netlify/edge-functions"
+          fi
+          target="--alias=${{ github.event.inputs.netlify_environment || 'production' }}"
+          if [ "${{ github.event.inputs.netlify_environment || 'production' }}" = "production" ]; then
+            target="--prod"
+          fi
+          echo "functions_flag=$flag" >> "$GITHUB_OUTPUT"
+          echo "target_flag=$target" >> "$GITHUB_OUTPUT"
+
+      - name: Netlify deploy
+        uses: netlify/actions/cli@v4
+        with:
+          args: >-
+            deploy
+            --dir=apps/web/.next
+            ${{ steps.netlify-flags.outputs.functions_flag }}
+            ${{ steps.netlify-flags.outputs.target_flag }}
+            --message="${{ github.sha }}"
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+          NEXT_DISABLE_SSR_CACHE: 'false'
+          NETLIFY_NEXT_PLUGIN_SKIP: 'false'
+          NEXT_FORCE_CACHE: '1'
+
+      - name: Capture deployment URL
+        id: capture-url
+        run: |
+          if command -v netlify >/dev/null 2>&1; then
+            netlify status --json > netlify-status.json || true
+            if command -v jq >/dev/null 2>&1 && [ -s netlify-status.json ]; then
+              url=$(jq -r '.url // .site_url // empty' netlify-status.json)
+              echo "url=$url" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Configure ISR/SSR caching headers
+        if: always()
+        run: |
+          if [ -n "${{ secrets.NETLIFY_CACHE_CONTROL_WEB }}" ]; then
+            curl -sS -X PATCH "https://api.netlify.com/api/v1/sites/${{ secrets.NETLIFY_SITE_ID }}/build_settings" \
+              -H "Authorization: Bearer ${{ secrets.NETLIFY_AUTH_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              --data '{"headers": "'"${{ secrets.NETLIFY_CACHE_CONTROL_WEB }}"'"}' || true
+          fi
+
+      - name: Trigger revalidation hook (optional)
+        if: ${{ github.event.inputs.netlify_environment == 'production' || github.ref == 'refs/heads/main' }}
+        env:
+          REVALIDATE_HOOK: ${{ secrets.NETLIFY_REVALIDATE_HOOK }}
+        run: |
+          if [ -n "$REVALIDATE_HOOK" ]; then
+            curl -sS -X POST "$REVALIDATE_HOOK" -H 'Content-Type: application/json' -d '{"trigger":"gh-actions"}' || true
+          fi
+
+  supabase:
+    name: Supabase migrations & edge functions (${{ github.event.inputs.promote_environment || 'staging' }})
+    runs-on: ubuntu-latest
+    needs: netlify
+    environment:
+      name: supabase-${{ github.event.inputs.promote_environment || 'staging' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Authenticate Supabase
+        run: |
+          echo "${{ secrets.SUPABASE_ACCESS_TOKEN }}" | supabase login --token-stdin
+
+      - name: Link Supabase project
+        run: supabase link --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}"
+
+      - name: Run database migrations
+        env:
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          env_file="supabase/.env.${{ github.event.inputs.promote_environment || 'staging' }}.example"
+          if [ -f "$env_file" ]; then
+            supabase db push --env-file "$env_file"
+          else
+            supabase db push
+          fi
+
+      - name: Deploy edge functions
+        run: |
+          if [ -d supabase/functions ]; then
+            for dir in supabase/functions/*; do
+              [ -d "$dir" ] || continue
+              function_name=$(basename "$dir")
+              import_map_arg=""
+              if [ -f supabase/functions/import_map.json ]; then
+                import_map_arg="--import-map supabase/functions/import_map.json"
+              fi
+              supabase functions deploy "$function_name" $import_map_arg || true
+            done
+          fi
+
+      - name: Promote environment (requires approval)
+        if: ${{ github.event.inputs.promote_environment == 'production' }}
+        run: |
+          supabase db switch --env prod
+          if [ -f supabase/.env.production.example ]; then
+            supabase db push --env-file supabase/.env.production.example
+          else
+            supabase db push
+          fi
+
+      - name: Publish migration artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-migrations
+          path: supabase/migrations
+
+  notify:
+    name: Deployment notifications
+    runs-on: ubuntu-latest
+    needs:
+      - netlify
+      - supabase
+    if: always()
+    steps:
+      - name: Summary comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const netlifyUrl = '${{ needs.netlify.outputs.url || '' }}';
+            const message = `Deployment completed for ${context.ref}. Netlify: ${netlifyUrl || 'n/a'}`;
+            if (context.payload.pull_request) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: context.payload.pull_request.number,
+                body: message,
+              });
+            } else {
+              core.info(message);
+            }
+
+      - name: Send Sentry check-in
+        if: ${{ secrets.SENTRY_AUTH_TOKEN != '' && secrets.SENTRY_MONITOR_SLUG != '' }}
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_MONITOR_SLUG: ${{ secrets.SENTRY_MONITOR_SLUG }}
+        run: |
+          if [ -n "$SENTRY_MONITOR_SLUG" ]; then
+            STATUS="${{ needs.netlify.result == 'success' && needs.supabase.result == 'success' && 'ok' || 'error' }}"
+            npx sentry-cli monitor check-in --monitor "$SENTRY_MONITOR_SLUG" --status "$STATUS" --environment deploy || true
+          fi
+
+      - name: Emit OpenTelemetry deployment span (optional)
+        if: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT != '' }}
+        env:
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
+        run: |
+          if [ -n "$OTEL_EXPORTER_OTLP_ENDPOINT" ]; then
+            curl -sSf -X POST "$OTEL_EXPORTER_OTLP_ENDPOINT" -H 'Content-Type: application/json' -d '{"resourceSpans": []}' || true
+          fi
