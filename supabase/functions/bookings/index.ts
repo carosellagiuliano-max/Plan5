@@ -88,6 +88,26 @@ serve(async (req) => {
       }
 
       logInfo('appointment.booked', { requestId, appointmentId: data?.id, traceparent });
+
+      if (data?.id) {
+        const reminderAt = new Date(start.getTime() - service.buffer_minutes * 60 * 1000 - 60 * 60 * 1000);
+        if (reminderAt > new Date()) {
+          await client.from('reminders').insert({
+            tenant_id: payload.tenantId,
+            resource_type: 'appointment',
+            resource_id: data.id,
+            channel: 'email',
+            template: 'reminder_upcoming',
+            deliver_at: reminderAt.toISOString(),
+            payload: {
+              appointmentId: data.id,
+              customerId: payload.customerId,
+              startAt: start.toISOString(),
+            },
+          });
+        }
+      }
+
       return { appointment: data };
     }, { tenantId: payload.tenantId });
 

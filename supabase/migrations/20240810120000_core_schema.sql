@@ -399,6 +399,198 @@ select cron.schedule(
 )
 where not exists (select 1 from cron.job where jobname = 'cleanup_expired_stock');
 
+-- Payment transactions capture intent, checkout, refund, and webhook metadata
+create table if not exists app_public.payment_transactions (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid references app_public.organisations (id) on delete cascade,
+  order_id uuid not null references app_public.orders (id) on delete cascade,
+  appointment_id uuid references app_public.appointments (id) on delete set null,
+  provider text not null check (provider in ('stripe','sumup')),
+  provider_payment_id text not null,
+  amount_cents integer not null check (amount_cents >= 0),
+  currency char(3) not null,
+  status text not null check (status in ('requires_action','processing','succeeded','failed','refunded','cancelled','pending')),
+  captured_at timestamptz,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now()),
+  unique (provider, provider_payment_id)
+);
+create index if not exists payment_transactions_order_idx on app_public.payment_transactions (order_id, created_at desc);
+create trigger payment_transactions_touch_updated_at
+  before update on app_public.payment_transactions
+  for each row execute procedure app_public.touch_updated_at();
+
+create table if not exists app_public.payment_refunds (
+  id uuid primary key default gen_random_uuid(),
+  transaction_id uuid not null references app_public.payment_transactions (id) on delete cascade,
+  provider_refund_id text not null,
+  amount_cents integer not null check (amount_cents > 0),
+  status text not null check (status in ('pending','succeeded','failed')),
+  reason text,
+  initiated_by text not null check (initiated_by in ('customer','staff','system')),
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now()),
+  unique (provider_refund_id)
+);
+create trigger payment_refunds_touch_updated_at
+  before update on app_public.payment_refunds
+  for each row execute procedure app_public.touch_updated_at();
+
+create table if not exists app_public.payment_webhook_events (
+  id bigserial primary key,
+  tenant_id uuid,
+  provider text not null,
+  event_id text not null,
+  event_type text not null,
+  payload jsonb not null,
+  processed_at timestamptz,
+  created_at timestamptz not null default timezone('utc', now()),
+  unique (provider, event_id)
+);
+
+create table if not exists app_public.sumup_sessions (
+  checkout_id text primary key,
+  tenant_id uuid references app_public.organisations (id) on delete cascade,
+  order_id uuid not null references app_public.orders (id) on delete cascade,
+  deeplink text,
+  status text not null default 'pending' check (status in ('pending','successful','failed','cancelled')),
+  amount_cents integer not null,
+  currency char(3) not null,
+  last_polled_at timestamptz,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+create trigger sumup_sessions_touch_updated_at
+  before update on app_public.sumup_sessions
+  for each row execute procedure app_public.touch_updated_at();
+
+-- Invoice generation and archival tables
+create table if not exists app_public.vat_settings (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid references app_public.organisations (id) on delete cascade,
+  country char(2) not null,
+  rate numeric(5,2) not null,
+  label text,
+  effective_from date not null,
+  created_at timestamptz not null default timezone('utc', now()),
+  unique (tenant_id, country, effective_from)
+);
+
+create table if not exists app_public.invoices (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid references app_public.organisations (id) on delete cascade,
+  order_id uuid references app_public.orders (id) on delete set null,
+  invoice_number text not null,
+  issued_at timestamptz not null default timezone('utc', now()),
+  due_at timestamptz not null,
+  currency char(3) not null,
+  total_cents integer not null,
+  vat_summary jsonb not null default '[]'::jsonb,
+  qr_bill_payload text,
+  pdf_url text,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now()),
+  unique (tenant_id, invoice_number)
+);
+create trigger invoices_touch_updated_at
+  before update on app_public.invoices
+  for each row execute procedure app_public.touch_updated_at();
+
+create table if not exists app_public.invoice_items (
+  id uuid primary key default gen_random_uuid(),
+  invoice_id uuid references app_public.invoices (id) on delete cascade,
+  description text not null,
+  quantity integer not null check (quantity > 0),
+  unit_price_cents integer not null check (unit_price_cents >= 0),
+  vat_rate numeric(5,2),
+  metadata jsonb not null default '{}'::jsonb
+);
+
+create table if not exists app_public.invoice_archives (
+  id uuid primary key default gen_random_uuid(),
+  invoice_id uuid references app_public.invoices (id) on delete cascade,
+  storage_path text not null,
+  checksum text,
+  created_at timestamptz not null default timezone('utc', now())
+);
+
+-- Email bounce tracking
+create table if not exists app_public.email_bounces (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid references app_public.organisations (id) on delete cascade,
+  provider text not null,
+  email text not null,
+  reason text,
+  occurred_at timestamptz not null default timezone('utc', now()),
+  metadata jsonb not null default '{}'::jsonb
+);
+
+-- Consent tracking & compliance
+create table if not exists app_public.consents (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid references app_public.organisations (id) on delete cascade,
+  subject_id uuid not null,
+  consent_type text not null,
+  granted boolean not null,
+  granted_at timestamptz not null default timezone('utc', now()),
+  revoked_at timestamptz,
+  metadata jsonb not null default '{}'::jsonb,
+  unique (tenant_id, subject_id, consent_type, granted_at)
+);
+
+create table if not exists app_public.compliance_requests (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid references app_public.organisations (id) on delete cascade,
+  subject_id uuid not null,
+  request_type text not null check (request_type in ('export','delete')),
+  status text not null default 'queued' check (status in ('queued','in_progress','completed','rejected')),
+  initiated_by text not null check (initiated_by in ('customer','staff','system')),
+  reason text,
+  export_url text,
+  completed_at timestamptz,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+create trigger compliance_requests_touch_updated_at
+  before update on app_public.compliance_requests
+  for each row execute procedure app_public.touch_updated_at();
+
+-- Reminder scheduler
+create table if not exists app_public.reminders (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid references app_public.organisations (id) on delete cascade,
+  resource_type text not null,
+  resource_id uuid not null,
+  channel text not null check (channel in ('email','sms','webhook')),
+  template text not null,
+  payload jsonb not null default '{}'::jsonb,
+  deliver_at timestamptz not null,
+  status text not null default 'scheduled' check (status in ('scheduled','processing','sent','cancelled','failed')),
+  last_error text,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+create index if not exists reminders_due_idx on app_public.reminders (status, deliver_at);
+create trigger reminders_touch_updated_at
+  before update on app_public.reminders
+  for each row execute procedure app_public.touch_updated_at();
+
+-- Schedule reminder processor every 5 minutes
+select cron.schedule(
+  'process_reminders',
+  '*/5 * * * *',
+  $$select net.http_post(
+      url := current_setting('app.settings.reminder_endpoint', true),
+      body := json_build_object('token', current_setting('app.settings.reminder_secret', true))
+    );$$
+)
+where not exists (select 1 from cron.job where jobname = 'process_reminders');
+
 select cron.schedule(
   'send_appointment_reminders',
   '*/30 * * * *',
